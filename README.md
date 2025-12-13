@@ -56,7 +56,9 @@ Gold folders are wiped per label per run
 
 Unreadable or low-confidence files go to data/quarantine/
 
-Folder Structure
+## Folder Structure
+
+```text
 file_classifier/
 ├── datalake/                  # Raw input files (gitignored)
 │
@@ -81,6 +83,7 @@ file_classifier/
 │
 ├── config/                    # Runtime configuration
 └── README.md
+
 
 Unknown Schema Handling
 
