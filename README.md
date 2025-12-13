@@ -99,6 +99,3 @@ Unknown schemas are **never silent**:
 
 ```bash
 python -m src.main
-
-
-
