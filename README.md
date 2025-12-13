@@ -1,27 +1,24 @@
-Project Context Prompt — file_classifier
+file_classifier
 
-You are helping me maintain and extend a Python data-engineering project called file_classifier.
+A deterministic, schema-based file classifier for XLSX and CSV files.
 
-The project is already implemented, stable, and working end-to-end.
-Your job is to extend or refactor it without breaking its guarantees, performance, or mental model.
+This project classifies messy spreadsheet files based on detected schemas (headers) rather than filenames or folder structure. It is designed for data engineering workflows where auditability, reproducibility, and explicit control over data meaning are required.
 
-🎯 Core Goal
+Problem Statement
 
-Automatically classify messy spreadsheet files (XLSX, CSV) into business-meaningful categories using schema detection, not filenames or folders.
+In many data pipelines, spreadsheet files are unreliable inputs:
 
-The system must remain:
+Filenames are inconsistent or misleading
 
-deterministic
+Folder structure changes over time
 
-auditable
+The same dataset may be exported daily with different names
 
-fast
+New file variants appear silently and break downstream logic
 
-explicit about unknown schemas
+This project solves that by treating a file’s schema as its true identity.
 
-manually controlled for semantic meaning
-
-🧠 Core Philosophy
+Core Idea
 
 Headers define meaning
 
@@ -29,48 +26,46 @@ Formats do not
 
 Filenames lie
 
-A file’s schema (exact normalized header set) is its identity.
+A file is classified solely by the exact set of normalized headers it contains.
 
-📥 Input Assumptions
+Key Features
 
-Input files live in datalake/
+Schema detection using header heuristics
 
-Input is read-only
+Stable schema identity via hashing
 
-Supported formats:
+Manual semantic labeling (no auto-mapping)
 
-.xlsx
+Explicit handling of unknown schemas
 
-.csv
+Snapshot-based gold outputs (no accumulation)
 
-Each file:
+Full audit trail in Parquet
 
-Has a single logical table
+Fast preview-based processing
 
-May include metadata rows above the real header
+Supports XLSX and CSV
 
-May have broken Excel metadata (UsedRange issues)
-
-🗂️ High-Level Architecture
-datalake/              # raw input (never touched)
+High-Level Architecture
+datalake/        # raw input (read-only)
    ↓
 pipeline
    ↓
-data/staging/          # metadata, audits, decisions (truth)
+data/staging/    # audit & metadata (truth)
    ↓
-data/classified/       # business snapshot (gold)
+data/classified/ # snapshot output (gold)
 
-🗃️ Folder Structure
+Folder Structure
 file_classifier/
 ├── datalake/                  # raw input files (gitignored)
 │
 ├── data/
-│   ├── staging/               # audit & metadata (Parquet)
+│   ├── staging/               # audit artifacts (Parquet)
 │   │   ├── file_catalog.parquet
 │   │   ├── schema_registry.parquet
 │   │   └── classification_manifest.parquet
 │   │
-│   ├── classified/            # snapshot output (gold)
+│   ├── classified/            # snapshot output
 │   │   ├── <label>/
 │   │   └── unknown_schema/
 │   │
@@ -80,200 +75,154 @@ file_classifier/
 │   ├── main.py                # orchestrator
 │   │
 │   ├── io/
-│   │   ├── scanner.py         # recursive file discovery
+│   │   ├── scanner.py
 │   │   └── preview_reader.py  # XLSX + CSV preview readers
 │   │
 │   ├── fingerprint/
-│   │   ├── header_detector.py # robust header detection
+│   │   ├── header_detector.py
 │   │   └── header_normalizer.py
 │   │
 │   ├── classify/
-│   │   └── file_copier.py     # snapshot-safe copy logic
+│   │   └── file_copier.py
 │   │
 │   └── labeling/
-│       └── schema_labels.py   # schema_hash → label loader
+│       └── schema_labels.py
 │
 ├── config/
 │   ├── settings.yaml
 │   ├── header_aliases.yaml
-│   └── schema_labels.yaml     # manual schema → label mapping
+│   └── schema_labels.yaml
 │
 └── README.md
 
-🔍 Pipeline (Step by Step)
-1️⃣ Scan
+Pipeline Overview
+1. Scan
 
 Recursively scan datalake/
 
-Collect:
+Collect file path, size, and modification time
 
-path
+Stable ordering for deterministic runs
 
-size
+2. Preview Read
 
-modified time
-
-Sorted for deterministic runs
-
-2️⃣ Preview Read (cheap)
-
-Read only first N rows
+Read only the first N rows
 
 XLSX: pandas.read_excel(nrows=N)
 
 CSV: pandas.read_csv(nrows=N, sep=None)
 
-Avoid full reads
+Avoids full file reads for performance
 
-3️⃣ Header Detection (Heuristic)
+3. Header Detection
 
-Candidate rows scored by:
+Candidate rows are scored using:
 
-non-empty density
+Non-empty density
 
-text vs numeric ratio
+Text vs numeric ratio
 
-short-string dominance
+Short-string dominance
 
-uniqueness
+Uniqueness
 
-coherence with following rows
+Coherence with following rows
 
-If confidence < threshold → low_confidence
+Low-confidence detections are flagged explicitly.
 
-4️⃣ Header Normalization
+4. Header Normalization
 
-Rules:
+Headers are normalized by:
 
-lowercase
+Lowercasing
 
-trim
+Trimming whitespace
 
-remove accents
+Removing accents
 
-spaces/dots/dashes → _
+Replacing separators with _
 
-collapse _
+Removing invalid characters
 
-remove non [a-z0-9_]
+Deduplicating
 
-deduplicate (col, col__2, …)
+Optional alias mapping
 
-optional alias mapping (header_aliases.yaml)
+5. Schema Identity
 
-5️⃣ Schema Identity
+Schema = exact set of normalized headers (order ignored)
 
-Schema = set of normalized headers (order ignored)
+schema_key = sorted join of headers
 
-schema_key = sorted join (audit)
+schema_hash = sha1(schema_key)[:12]
 
-schema_hash = sha1(schema_key)[:12] (stable identity)
+This hash is the stable identity of the schema.
 
-6️⃣ Manual Semantic Labeling
+6. Manual Semantic Labeling
 
-Load config/schema_labels.yaml
+Schema hashes are mapped to business labels in schema_labels.yaml
 
-Map:
+Unknown schemas are never auto-labeled
 
-schema_hash → business label
+Unknowns are surfaced explicitly
 
-
-Missing → unknown_schema
-
-No auto-labeling ever
-
-7️⃣ Persist Staging Artifacts (Truth Layer)
+7. Staging Outputs (Truth Layer)
 file_catalog.parquet
 
 One row per file:
 
-path
+Path, size, modified timestamp
 
-size
+Status (ok, unreadable, low_confidence)
 
-modified_ts
+Header metadata
 
-status (ok | unreadable | low_confidence)
+Schema identity
 
-header_row_index
-
-header_confidence
-
-raw_headers_json
-
-normalized_headers_json
-
-schema_key
-
-schema_hash
-
-schema_id
-
-label
+Assigned label
 
 schema_registry.parquet
 
 One row per schema:
 
-schema_id
+Schema hash and key
 
-schema_hash
+Canonical headers
 
-schema_key
+File count
 
-canonical_headers_json
-
-file_count
-
-example_files_json
+Example files
 
 classification_manifest.parquet
 
 One row per copy attempt:
 
-src_path
+Source path
 
-dst_path
+Destination path
 
-copy_status
+Copy status
 
-error_message
+Errors (if any)
 
-schema_id
+8. Classification Output (Snapshot)
 
-schema_hash
-
-label
-
-8️⃣ Physical Classification (Gold Snapshot)
-
-Snapshot mode:
-
-Gold folders are wiped per label per run
-
-No accumulation
-
-Output:
+Files are copied to:
 
 data/classified/<label>/<schema_hash>__original_filename.ext
 
 
-Unreadable / low confidence → data/quarantine/
+Snapshot semantics:
 
-🧠 Key Mental Model
-Layer	Purpose
-datalake/	raw input
-staging/	truth & audit
-classified/	business snapshot
-schema_hash	identity
-label	meaning
+Gold folders are wiped per label per run
 
-Staging answers “why”.
-Classified answers “where”.
+No accumulation across runs
 
-🧾 CLI Output (psql-style)
+Unreadable or low-confidence files go to data/quarantine/
 
-The CLI shows a compact table:
+CLI Output
+
+The CLI prints a compact summary table:
 
 schema                     files  headers  rows
 wellsky_clients                6       18      6
@@ -281,25 +230,28 @@ ringcentral_calls              8       10      8
 ...
 
 
-files = number of files in snapshot
+files: number of files in the snapshot
 
-rows = number of files (cheap, not data rows)
+headers: schema complexity
 
-🚨 Unknown Schema Handling
+rows: number of files (cheap metric, not data rows)
 
-Unknown schemas:
+Unknown Schema Handling
 
-go to classified/unknown_schema/
+Unknown schemas are copied to classified/unknown_schema/
 
-printed in console
+Missing schema hashes are printed in the console
 
-User manually updates schema_labels.yaml
+User must manually update schema_labels.yaml
 
-Next run → auto-classified
+Next run classifies them automatically
 
-This is intentional and required.
+This behavior is intentional and required.
 
-▶️ How to Run
+How to Run
+
+From the project root:
+
 python -m src.main
 
 
@@ -307,47 +259,40 @@ Dry run:
 
 python -m src.main --dry-run
 
-🧱 Current State (Important)
+Design Guarantees
 
-End-to-end stable
+Same headers always produce the same schema hash
 
-XLSX + CSV supported
+Header order does not matter
 
-Snapshot logic working
+Filenames do not affect classification
 
-CLI clean and fast
+Unknown schemas are never silent
 
-Performance optimized
+Staging is always the source of truth
 
-No accumulation
+Non-Goals
 
-No silent behavior
+Automatic semantic inference
 
-🚫 Hard Constraints for All Future Work
+Fuzzy schema matching
 
-❌ Do not bypass staging
+Silent schema drift handling
 
-❌ Do not auto-label schemas
+These are explicitly avoided to preserve auditability and trust.
 
-❌ Do not break snapshot semantics
+Possible Extensions
 
-❌ Do not re-read full files unnecessarily
-
-❌ Do not mix audit and presentation layers
-
-🚀 Approved Future Extensions (Optional)
-
-Incremental processing via file_sig
+Incremental processing using file signatures
 
 Persisted real row counts (computed once)
 
-Archive historical snapshots
+Schema drift detection
 
-CLI filters (--only unknown, --only label X)
+Historical snapshot archiving
 
-CSV dialect overrides
+CLI filters and inspection tools
 
-Final Instruction to Assistant
+License
 
-Preserve the mental model first,
-then optimize or extend without regressions.
+MIT
