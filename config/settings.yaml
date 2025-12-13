@@ -1,0 +1,46 @@
+# Root folder of the dirty datalake (read-only)
+input_root: "./datalake"
+
+# Project-managed output root
+output_root: "./data"
+
+paths:
+  staging_dir: "./data/staging"
+  classified_dir: "./data/classified"
+  quarantine_dir: "./data/quarantine"
+  logs_dir: "./logs"
+
+# Excel reading / preview
+excel:
+  preview_rows: 200        # rows read with pandas.read_excel
+  header_search_rows: 60   # rows scored to detect header
+  sheet_index: 0
+
+# Header detection thresholds
+header_detection:
+  min_header_confidence: 0.60
+
+# Sampling (auditing / profiling only)
+sampling:
+  sample_rows: 200
+
+# Schema behavior
+schema:
+  match_mode: "exact_set"   # exact_set only (order ignored)
+  key_mode: "join"          # join now, hash later
+  id_prefix: "schema_"
+  id_width: 3
+
+# Classification behavior
+copy:
+  mode: "copy"              # copy | move
+  overwrite: false
+  dry_run: false
+
+# Supported files
+extensions: [".xlsx", ".csv"]
+
+# Logging
+logging:
+  level: "INFO"
+  file: "./logs/run.log"

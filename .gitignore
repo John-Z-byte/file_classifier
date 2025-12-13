@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+.venv/
+
+# Data (never commit)
+datalake/
+data/classified/
+data/staging/
+data/quarantine/
+
+# Logs
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
