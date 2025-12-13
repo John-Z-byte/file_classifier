@@ -1,112 +1,104 @@
-Staging Outputs (Truth Layer)
+# file_classifier
 
-All decisions and metadata are persisted in Parquet files under data/staging/.
-This layer is the source of truth for auditability and reproducibility.
+## A deterministic, schema-based file classifier for XLSX and CSV files
 
-file_catalog.parquet
+This project classifies messy spreadsheet files based on **detected schemas (headers)** rather than filenames or folder structure. It is designed for data engineering workflows where **auditability, reproducibility, and explicit control over data meaning** are required.
 
-One row per file:
+---
 
-File path, size, modified timestamp
+## Problem Statement
 
-Status: ok, unreadable, low_confidence
+### Solution for Spreadsheet-Based Data Pipeline Inconsistency
 
-Detected header metadata
+Spreadsheet-based data pipelines often fail because:
 
-Schema identity (schema_key, schema_hash)
+- Filenames are inconsistent or misleading  
+- Folder structures change over time  
+- The same dataset is exported repeatedly with different names  
+- New file variants appear silently and break downstream logic  
 
-Assigned semantic label
+This project addresses these issues by treating a file’s **schema as its true identity**.
 
-schema_registry.parquet
+---
 
-One row per schema:
+## Core Principle
 
-Schema hash and canonical key
+- Headers define meaning  
+- Formats do not  
+- Filenames lie  
 
-Canonical normalized headers
+A file is classified **only** by the exact set of **normalized headers** it contains.
 
-Number of files using the schema
+---
 
-Example file paths
+## Key Features
 
-classification_manifest.parquet
+- Schema detection using header heuristics  
+- Stable schema identity via hashing  
+- Manual semantic labeling (no auto-mapping)  
+- Explicit handling of unknown schemas  
+- Snapshot-based gold outputs (no accumulation)  
+- Full audit trail in Parquet  
+- Fast preview-based processing  
+- Supports XLSX and CSV formats  
 
-One row per copy attempt:
+---
 
-Source and destination paths
+## High-Level Architecture
 
-Copy status
+The pipeline is organized into four main stages:
 
-Error message (if any)
+- **`datalake/`**  
+  Raw input files (read-only source)
 
-Schema identity and label
+- **`pipeline`**  
+  Schema detection, normalization, and hashing logic
 
-Physical Classification (Gold Output)
+- **`data/staging/`**  
+  Audit and metadata storage (**Truth Layer**) persisted in Parquet
 
-Files are copied into snapshot-style gold folders:
+- **`data/classified/`**  
+  Snapshot-based gold output organized by schema label
 
-data/classified/<label>/<schema_hash>__original_filename.ext
-
-
-Rules:
-
-Snapshot semantics (no accumulation across runs)
-
-Gold folders are wiped per label per run
-
-Unreadable or low-confidence files go to data/quarantine/
+---
 
 ## Folder Structure
 
 ```text
 file_classifier/
 ├── datalake/                  # Raw input files (gitignored)
-│
 ├── data/
 │   ├── staging/               # Audit & metadata (Parquet)
-│   │   ├── file_catalog.parquet
-│   │   ├── schema_registry.parquet
-│   │   └── classification_manifest.parquet
-│   │
 │   ├── classified/            # Snapshot gold output
-│   │   ├── <label>/
-│   │   └── unknown_schema/
-│   │
 │   └── quarantine/            # Unreadable / low-confidence files
-│
-├── src/
-│   ├── main.py                # Orchestrator
-│   ├── io/                    # File discovery & preview readers
-│   ├── fingerprint/           # Header detection & normalization
-│   ├── classify/              # Snapshot-safe copy logic
-│   └── labeling/              # Schema hash → label mapping
-│
+├── src/                       # Pipeline source code
 ├── config/                    # Runtime configuration
 └── README.md
+```
+## Unknown Schema Handling
+
+Unknown schemas are **never silent**:
+
+- Files are copied to `classified/unknown_schema/`
+- Missing schema hashes are printed in the CLI
+- Users must explicitly label schemas before they are classified
+
+---
+
+## Design Guarantees
+
+- Same headers always produce the same schema hash
+- Header order does not matter
+- Filenames do not affect classification
+- Unknown schemas are always surfaced
+- Staging is the single source of truth
+
+---
+
+## How to Run
+
+```bash
+python -m src.main
 
 
-Unknown Schema Handling
 
-Unknown schemas are never silent.
-
-Files are copied to classified/unknown_schema/
-
-Missing schema hashes are printed in the CLI
-
-User must explicitly add them to schema_labels.yaml
-
-Next run classifies them automatically
-
-This behavior is intentional and enforced.
-
-Design Guarantees
-
-Same headers always produce the same schema hash
-
-Header order does not matter
-
-Filenames do not affect classification
-
-Unknown schemas are always surfaced
-
-Staging is always the source of truth
