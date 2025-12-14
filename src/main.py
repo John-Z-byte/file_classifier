@@ -93,6 +93,9 @@ def main() -> None:
     overwrite = bool(cfg["copy"]["overwrite"])
     dry_run = bool(cfg["copy"]["dry_run"])
 
+    # NEW: how many recent files to copy per schema_hash
+    KEEP_LAST_N = int(cfg.get("copy", {}).get("keep_last_n_per_schema", 6))
+
     # Output dirs
     staging_dir = Path(cfg["paths"]["staging_dir"])
     classified_dir = Path(cfg["paths"]["classified_dir"])
@@ -234,6 +237,33 @@ def main() -> None:
             seen.add(h)
             print(f"- {h}")
 
+    # ============================================================
+    # NEW: Filter to classify only the most recent N files per schema_hash
+    #      using modified_ts (filesystem mtime).
+    #      We still quarantine non-ok rows.
+    # ============================================================
+    # Ensure modified_ts is datetime-like for sorting
+    if "modified_ts" in catalog_df.columns:
+        catalog_df["modified_ts"] = pd.to_datetime(catalog_df["modified_ts"], errors="coerce")
+
+    ok_df = catalog_df[catalog_df["status"].eq("ok")].copy()
+    non_ok_df = catalog_df[~catalog_df["status"].eq("ok")].copy()
+
+    # Sort newest first within each schema_hash, then keep head(N)
+    ok_df = ok_df.sort_values(["schema_hash", "modified_ts"], ascending=[True, False])
+    ok_keep_df = (
+        ok_df.groupby("schema_hash", group_keys=False)
+             .head(KEEP_LAST_N)
+             .copy()
+    )
+
+    # Final rows to process in copy loop
+    rows_to_copy = pd.concat([ok_keep_df, non_ok_df], ignore_index=True)
+
+    # Convert back to list-of-dicts to keep your current loop structure
+    catalog_rows_to_copy = rows_to_copy.to_dict(orient="records")
+    # ============================================================
+
     # --- Classification (copy files) + manifest ---
     manifest_rows = []
     copy_counts = Counter()
@@ -241,11 +271,11 @@ def main() -> None:
     if not dry_run:
         # SNAPSHOT MODE: wipe gold folders for labels that appear in THIS run (latest snapshot)
         labels_in_run = sorted(
-            {r["label"] for r in catalog_rows if r.get("status") == "ok" and r.get("label")}
+            {r["label"] for r in catalog_rows_to_copy if r.get("status") == "ok" and r.get("label")}
         )
         prepare_snapshot_folders(classified_dir, labels_in_run)
 
-        for r in catalog_rows:
+        for r in catalog_rows_to_copy:
             src_path = Path(r["path"])
             src_status = r["status"]
 
@@ -276,7 +306,7 @@ def main() -> None:
             )
             copy_counts[res.status] += 1
     else:
-        for r in catalog_rows:
+        for r in catalog_rows_to_copy:
             manifest_rows.append(
                 {
                     "run_ts": run_ts,
@@ -291,13 +321,13 @@ def main() -> None:
                     "label": r.get("label"),
                 }
             )
-        copy_counts["skipped_dry_run"] = len(catalog_rows)
+        copy_counts["skipped_dry_run"] = len(catalog_rows_to_copy)
 
     manifest_df = pd.DataFrame(manifest_rows)
     manifest_path = staging_dir / "classification_manifest.parquet"
     manifest_df.to_parquet(manifest_path, index=False)
 
-        # --- Console summary ---
+    # --- Console summary ---
     print(f"Total files: {len(files)}")
     print(f"Total schemas (distinct normalized header sets): {len(schema_id_map)}")
     print(f"Status counts: {dict(status_counts)}")
@@ -352,5 +382,7 @@ def main() -> None:
     print("\nSchema summary:")
     print(tabulate(view, headers="keys", tablefmt="psql", showindex=False))
 
+
 if __name__ == "__main__":
     main()
+

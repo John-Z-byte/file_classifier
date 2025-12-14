@@ -10,6 +10,7 @@ datalake/
 data/classified/
 data/staging/
 data/quarantine/
+data/processed/
 
 # Logs
 logs/
